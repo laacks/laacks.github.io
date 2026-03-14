@@ -58,6 +58,467 @@
 
         if (hits.length > 0) {
           const surfaceY = hits[0].point.y;
+
+          // Ignore hits above the player — these are undersides of
+          // elevated objects, not ground. Without this the player
+          // teleports up onto them when jumping beneath them.
+          if (surfaceY > pos.y + 0.05) return;
+
+          const distAboveSurface = pos.y - surfaceY;
+
+          if (distAboveSurface <= 0.05 && this.verticalVelocity <= 0) {
+            // On the ground
+            this.isGrounded = true;
+            this.isJumping  = false;
+            this.verticalVelocity = 0;
+
+            // Only step up passively if within maxStep —
+            // but if we're landing from a jump, land wherever we are
+            const stepUp = surfaceY - pos.y;
+            if (stepUp <= this.data.maxStep) {
+              if (this.targetY === null) {
+                this.targetY = surfaceY;
+              } else {
+                this.targetY += Math.min(surfaceY - this.targetY, this.data.maxStep);
+              }
+              pos.y += (this.targetY - pos.y) * this.data.smoothing;
+            }
+          } else {
+            // Airborne — apply gravity
+            this.isGrounded = false;
+            this.verticalVelocity -= this.data.gravity * dt;
+            pos.y += this.verticalVelocity * dt;
+
+            // Don't fall through the floor
+            if (pos.y < surfaceY) {
+              pos.y = surfaceY;
+              this.verticalVelocity = 0;
+              this.isGrounded = true;
+              this.isJumping  = false;
+              this.targetY    = surfaceY;
+            }
+          }
+        } else {
+          // No ground found — keep falling
+          this.isGrounded = false;
+          this.verticalVelocity -= this.data.gravity * dt;
+          pos.y += this.verticalVelocity * dt;
+        }
+      }
+    });
+
+    // ---------------------------------------------------------
+    // 2. VR LOCOMOTION + COLLISION + JUMP
+    //    - Left stick: move, Right stick: turn
+    //    - Forward collision ray blocks movement into walls
+    //    - A button (right controller button 4): jump
+    //    - Jump height: 40% of 1.6m = 0.64m
+    //    - WASD + Space on desktop
+    // ---------------------------------------------------------
+    AFRAME.registerComponent('vr-locomotion', {
+      schema: {
+        speed:       { default: 3.0 },
+        turnSpeed:   { default: 1.5 },
+        jumpHeight:  { default: 0.64 },   // 40% of 1.6m
+        collisionDist: { default: 0.4 }   // meters before wall blocks movement
+      },
+      init: function () {
+        this.camera       = null;
+        this.isVR         = false;
+        this.meshes       = null;
+        this.forwardRay   = new THREE.Raycaster();
+        this.forwardDir   = new THREE.Vector3();
+        this.forwardOrigin = new THREE.Vector3();
+        this.aWasPressed  = false;  // edge detection for jump button
+
+        // Keyboard state
+        this.keys = {};
+        this._onKeyDown = (e) => { this.keys[e.code] = true; };
+        this._onKeyUp   = (e) => { this.keys[e.code] = false; };
+        window.addEventListener('keydown', this._onKeyDown);
+        window.addEventListener('keyup',   this._onKeyUp);
+
+        this.el.sceneEl.addEventListener('enter-vr', () => { this.isVR = true;  });
+        this.el.sceneEl.addEventListener('exit-vr',  () => { this.isVR = false; });
+
+        // Cache meshes when scene loads
+        this.el.sceneEl.addEventListener('loaded', () => {
+          this.meshes = [];
+          this.el.sceneEl.object3D.traverse(obj => {
+            if (obj.isMesh) this.meshes.push(obj);
+          });
+        });
+      },
+
+      remove: function () {
+        window.removeEventListener('keydown', this._onKeyDown);
+        window.removeEventListener('keyup',   this._onKeyUp);
+      },
+
+      // Check if movement in world direction (wx, wz) is blocked by a wall
+      isBlocked: function (pos, wx, wz) {
+        if (!this.meshes) return false;
+        // Ray from just above ground level (0.1m) to catch low obstacles
+        this.forwardOrigin.set(pos.x, pos.y + 0.1, pos.z);
+        this.forwardDir.set(wx, 0, wz).normalize();
+        this.forwardRay.set(this.forwardOrigin, this.forwardDir);
+        this.forwardRay.far = this.data.collisionDist;
+        const hits = this.forwardRay.intersectObjects(this.meshes, false);
+        return hits.length > 0;
+      },
+
+      tick: function (time, delta) {
+        if (!delta) return;
+        const dt  = delta / 1000;
+        const rig = this.el;
+
+        if (!this.camera) {
+          this.camera = rig.querySelector('[camera]');
+          if (!this.camera) return;
+        }
+
+        // Get terrain-follow component to read/write jump state
+        const tf = rig.components['terrain-follow'];
+
+        let moveX = 0, moveZ = 0, turn = 0;
+        let jumpPressed = false;
+
+        if (this.isVR) {
+          const xrSession = this.el.sceneEl.xrSession;
+          if (xrSession && xrSession.inputSources) {
+            for (const source of xrSession.inputSources) {
+              if (!source.gamepad) continue;
+              const axes    = source.gamepad.axes;
+              const buttons = source.gamepad.buttons;
+
+              if (source.handedness === 'left') {
+                if (axes.length > 3) {
+                  if (Math.abs(axes[2]) > 0.15) moveX += axes[2];
+                  if (Math.abs(axes[3]) > 0.15) moveZ += axes[3];
+                }
+              } else if (source.handedness === 'right') {
+                if (axes.length > 2) {
+                  if (Math.abs(axes[2]) > 0.15) turn += axes[2];
+                }
+                // A button = button index 4 on Quest Touch controllers
+                if (buttons && buttons[4] && buttons[4].pressed) {
+                  jumpPressed = true;
+                }
+              }
+            }
+          }
+        } else {
+          if (this.keys['KeyW'] || this.keys['ArrowUp'])    moveZ -= 1;
+          if (this.keys['KeyS'] || this.keys['ArrowDown'])  moveZ += 1;
+          if (this.keys['KeyA'] || this.keys['ArrowLeft'])  moveX -= 1;
+          if (this.keys['KeyD'] || this.keys['ArrowRight']) moveX += 1;
+          if (this.keys['Space']) jumpPressed = true;
+        }
+
+        // --- JUMP (edge trigger — only fires once per press) ---
+        if (tf && jumpPressed && !this.aWasPressed && tf.isGrounded) {
+          // v² = 2gh  →  v = sqrt(2 * g * jumpHeight)
+          tf.verticalVelocity = Math.sqrt(2 * tf.data.gravity * this.data.jumpHeight);
+          tf.isGrounded = false;
+          tf.isJumping  = true;
+        }
+        this.aWasPressed = jumpPressed;
+
+        // --- TURN ---
+        if (turn !== 0) {
+          rig.object3D.rotation.y -= turn * this.data.turnSpeed * dt;
+        }
+
+        if (moveX === 0 && moveZ === 0) return;
+
+        // --- MOVEMENT with collision check ---
+        const yaw = rig.object3D.rotation.y;
+        const cos = Math.cos(yaw), sin = Math.sin(yaw);
+        const wx = moveX * cos + moveZ * sin;
+        const wz = -moveX * sin + moveZ * cos;
+
+        const pos = rig.object3D.position;
+        const spd = this.data.speed * dt;
+
+        // Check collision in movement direction
+        // If blocked, try sliding along each axis separately
+        if (!this.isBlocked(pos, wx, wz)) {
+          pos.x += wx * spd;
+          pos.z += wz * spd;
+        } else {
+          // Try X axis only (slide along wall)
+          if (!this.isBlocked(pos, wx, 0)) {
+            pos.x += wx * spd;
+          }
+          // Try Z axis only
+          if (!this.isBlocked(pos, 0, wz)) {
+            pos.z += wz * spd;
+          }
+        }
+      }
+    });
+  </script>
+
+  <!-- aframe-extras only needed for oculus-touch-controls model rendering -->
+  <script src="https://cdn.jsdelivr.net/npm/aframe-extras@6.1.1/dist/aframe-extras.min.js"></script>
+
+  <style>
+    body { margin: 0; background: #87ceeb; }
+    #instructions {
+      position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+      background: rgba(0,0,0,0.5); color: #ffe8a0; font-family: monospace;
+      font-size: 13px; padding: 10px 20px; border-radius: 6px;
+      border: 1px solid rgba(255,220,100,0.3); pointer-events: none;
+      text-align: center; z-index: 999; transition: opacity 1s;
+    }
+  </style>
+</head>
+<body>
+
+<div id="instructions">
+  Desktop: WASD to move · Mouse to look &nbsp;|&nbsp; Quest: Left stick = move · Right stick = turn
+</div>
+
+<a-scene
+  fog="type: exponential; color: #c8ddb0; density: 0.010"
+  shadow="type: pcfsoft"
+  renderer="antialias: true; colorManagement: true"
+>
+
+  <!-- ===== CAMERA + CONTROLS ===== -->
+  <a-entity
+    id="rig"
+    position="0 0 12"
+    vr-locomotion="speed: 3.0; turnSpeed: 1.5"
+    terrain-follow="maxStep: 0.32; smoothing: 0.15"
+  >
+    <a-camera
+      look-controls="pointerLockEnabled: true"
+      wasd-controls="enabled: false"
+      position="0 1.6 0"
+    >
+      <a-cursor color="#ffeeaa" opacity="0.4" raycaster="enabled: false"></a-cursor>
+    </a-camera>
+    <a-entity oculus-touch-controls="hand: left"></a-entity>
+    <a-entity oculus-touch-controls="hand: right"></a-entity>
+  </a-entity>
+
+  <!-- ===== SKY ===== -->
+  <a-sky color="#7ec8e3"></a-sky>
+
+  <!-- Sun -->
+  <a-sphere position="40 60 -80" radius="6"
+    color="#fff8e0"
+    material="emissive:#fffacc; emissiveIntensity:1; shader:flat">
+  </a-sphere>
+
+  <!-- Clouds -->
+  <a-sphere position="-25 28 -60" radius="5"  color="#ffffff" material="roughness:1; opacity:0.92; transparent:true"></a-sphere>
+  <a-sphere position="-18 27 -60" radius="7"  color="#f8f8f8" material="roughness:1; opacity:0.88; transparent:true"></a-sphere>
+  <a-sphere position="-10 29 -58" radius="4"  color="#ffffff" material="roughness:1; opacity:0.85; transparent:true"></a-sphere>
+  <a-sphere position="15  26 -65" radius="6"  color="#f0f0f0" material="roughness:1; opacity:0.88; transparent:true"></a-sphere>
+  <a-sphere position="22  28 -64" radius="4"  color="#ffffff" material="roughness:1; opacity:0.90; transparent:true"></a-sphere>
+  <a-sphere position="30  25 -70" radius="8"  color="#f8f8f8" material="roughness:1; opacity:0.82; transparent:true"></a-sphere>
+
+  <!-- ===== LIGHTING ===== -->
+  <a-light type="directional" color="#fff5cc" intensity="1.8"
+    position="6 12 4" cast-shadow="true"
+    shadow-camera-left="-20" shadow-camera-right="20"
+    shadow-camera-top="20"   shadow-camera-bottom="-20">
+  </a-light>
+  <a-light type="ambient"    color="#a8c8e8" intensity="0.9"></a-light>
+  <a-light type="hemisphere" color="#d4e8a0" ground-color="#8aaa60" intensity="0.4"></a-light>
+
+  <!-- ===== GROUND ===== -->
+  <a-plane position="0 0 0" rotation="-90 0 0" width="120" height="120"
+    color="#5a7a3a" material="roughness:1; metalness:0" shadow="receive:true">
+  </a-plane>
+
+  <!-- Grass patches -->
+  <a-plane position="4  0.01  5"  rotation="-90 0  20" width="4" height="3" color="#4a7030" material="roughness:1; opacity:0.9; transparent:true"></a-plane>
+  <a-plane position="-6 0.01  3"  rotation="-90 0 -10" width="3" height="4" color="#527838" material="roughness:1; opacity:0.8; transparent:true"></a-plane>
+  <a-plane position="1  0.01 -8"  rotation="-90 0  40" width="5" height="3" color="#4e7434" material="roughness:1; opacity:0.9; transparent:true"></a-plane>
+  <a-plane position="-8 0.01 -5"  rotation="-90 0  15" width="4" height="4" color="#4a6e30" material="roughness:1; opacity:0.85; transparent:true"></a-plane>
+  <a-plane position="8  0.01 -3"  rotation="-90 0 -25" width="3" height="3" color="#567a3c" material="roughness:1; opacity:0.8; transparent:true"></a-plane>
+
+  <!-- ===== TEMPLE STEPS ===== -->
+  <a-box position="0 0.1 4"  width="10"  height="0.2" depth="2"   color="#c8b888" material="roughness:1" shadow="receive:true"></a-box>
+  <a-box position="0 0.3 3"  width="9.2" height="0.2" depth="1.8" color="#c0b080" material="roughness:1" shadow="receive:true"></a-box>
+  <a-box position="0 0.5 2"  width="8.5" height="0.2" depth="1.8" color="#b8a878" material="roughness:1" shadow="receive:true"></a-box>
+
+  <!-- ===== TEMPLE FLOOR ===== -->
+  <a-box position="0 0.6 -2" width="14" height="0.2" depth="12"
+    color="#b0a070" material="roughness:1" shadow="receive:true">
+  </a-box>
+  <a-box position="-2 0.71 -1" width="0.05" height="0.02" depth="6"   color="#887050" material="roughness:1"></a-box>
+  <a-box position="2  0.71 -1" width="0.05" height="0.02" depth="6"   color="#887050" material="roughness:1"></a-box>
+  <a-box position="0  0.71  1" width="8"    height="0.02" depth="0.05" color="#887050" material="roughness:1"></a-box>
+  <a-box position="0  0.71 -1" width="8"    height="0.02" depth="0.05" color="#887050" material="roughness:1"></a-box>
+  <a-box position="0  0.71 -3" width="8"    height="0.02" depth="0.05" color="#887050" material="roughness:1"></a-box>
+
+  <!-- ===== COLUMNS — LEFT ===== -->
+  <a-cylinder position="-5 2.3 0"  radius="0.4" height="4.5" color="#c8b880" material="roughness:1" shadow="cast:true">
+    <a-cylinder position="0  2.4 0" radius="0.52" height="0.3" color="#b8a870" material="roughness:1"></a-cylinder>
+    <a-cylinder position="0 -2.4 0" radius="0.52" height="0.3" color="#b8a870" material="roughness:1"></a-cylinder>
+  </a-cylinder>
+  <a-cylinder position="-5 2.3 -3" radius="0.4" height="4.5" color="#c8b880" material="roughness:1" shadow="cast:true">
+    <a-cylinder position="0  2.4 0" radius="0.52" height="0.3" color="#b8a870" material="roughness:1"></a-cylinder>
+    <a-cylinder position="0 -2.4 0" radius="0.52" height="0.3" color="#b8a870" material="roughness:1"></a-cylinder>
+  </a-cylinder>
+  <a-cylinder position="-5 1.5 -6" radius="0.4" height="2.8" color="#a89860" material="roughness:1" rotation="0 0 8" shadow="cast:true">
+    <a-cylinder position="0 -1.5 0" radius="0.52" height="0.3" color="#b8a870" material="roughness:1"></a-cylinder>
+  </a-cylinder>
+  <a-cylinder position="-6.5 0.82 -7.5" radius="0.4" height="2.5" color="#a89860" material="roughness:1" rotation="0 30 90" shadow="cast:true"></a-cylinder>
+
+  <!-- ===== COLUMNS — RIGHT ===== -->
+  <a-cylinder position="5 2.3 0"  radius="0.4" height="4.5" color="#c8b880" material="roughness:1" shadow="cast:true">
+    <a-cylinder position="0  2.4 0" radius="0.52" height="0.3" color="#b8a870" material="roughness:1"></a-cylinder>
+    <a-cylinder position="0 -2.4 0" radius="0.52" height="0.3" color="#b8a870" material="roughness:1"></a-cylinder>
+  </a-cylinder>
+  <a-cylinder position="5 2.3 -3" radius="0.4" height="4.5" color="#c8b880" material="roughness:1" shadow="cast:true">
+    <a-cylinder position="0  2.4 0" radius="0.52" height="0.3" color="#b8a870" material="roughness:1"></a-cylinder>
+    <a-cylinder position="0 -2.4 0" radius="0.52" height="0.3" color="#b8a870" material="roughness:1"></a-cylinder>
+  </a-cylinder>
+  <a-cylinder position="5 1.9 -6" radius="0.4" height="3.5" color="#a89860" material="roughness:1" rotation="0 0 -5" shadow="cast:true">
+    <a-cylinder position="0 -1.8 0" radius="0.52" height="0.3" color="#b8a870" material="roughness:1"></a-cylinder>
+  </a-cylinder>
+
+  <!-- ===== ARCHITRAVE ===== -->
+  <a-box position="0 4.7 0"  width="11" height="0.5" depth="0.9" color="#b8a868" material="roughness:1" shadow="cast:true"></a-box>
+  <a-box position="1 4.4 -3" width="9"  height="0.5" depth="0.9" color="#a89858" material="roughness:1" rotation="0 0 -4"></a-box>
+
+  <!-- ===== BACK WALL ===== -->
+  <a-box position="-3 2 -7.5"   width="5" height="4" depth="0.7" color="#a89858" material="roughness:1" shadow="cast:true"></a-box>
+  <a-box position="4  1.5 -7.5" width="3" height="3" depth="0.7" color="#a08850" material="roughness:1"></a-box>
+  <a-box position="-1   2.5 -7.1" width="0.08" height="4" depth="0.08" color="#3a8030" material="roughness:1" rotation="0 0 12"></a-box>
+  <a-box position="-3.5 1.8 -7.1" width="0.08" height="3" depth="0.08" color="#448836" material="roughness:1" rotation="0 0 -8"></a-box>
+  <a-box position="1.5  1.2 -7.1" width="0.08" height="2" depth="0.08" color="#3a7828" material="roughness:1" rotation="0 0  5"></a-box>
+
+  <!-- ===== RUBBLE ===== -->
+  <a-box position="-6.5 0.82 -7.5" width="1.5" height="0.8" depth="1.2" color="#908060" material="roughness:1" rotation="0 10  0" shadow="cast:true"></a-box>
+  <a-box position="7    0.82 -7"   width="1.2" height="0.7" depth="1.0" color="#988868" material="roughness:1" rotation="0 20  0"></a-box>
+  <a-box position="6    0.72 -6"   width="0.8" height="0.5" depth="0.8" color="#887858" material="roughness:1" rotation="0 40  0"></a-box>
+  <a-box position="3    0.72  2"   width="1.2" height="0.5" depth="0.9" color="#908060" material="roughness:1" rotation="0 25  0" shadow="cast:true"></a-box>
+  <a-box position="-4   0.72  1"   width="1.0" height="0.4" depth="0.8" color="#887858" material="roughness:1" rotation="0 10  5"></a-box>
+  <a-box position="2    0.72 -4"   width="0.9" height="0.6" depth="0.7" color="#908060" material="roughness:1" rotation="0 60  0"></a-box>
+  <a-box position="-3   0.72 -4"   width="1.1" height="0.5" depth="1.0" color="#887858" material="roughness:1" rotation="0 -15 3"></a-box>
+  <a-box position="6    0.72 -1"   width="0.8" height="0.4" depth="0.9" color="#807050" material="roughness:1" rotation="0 45  0"></a-box>
+  <a-box position="-6   0.72 -2"   width="1.0" height="0.5" depth="0.8" color="#807050" material="roughness:1" rotation="0 30 -5"></a-box>
+
+  <!-- ===== ALTAR ===== -->
+  <a-box position="0 0.9 -6" width="3"   height="0.6" depth="1.5" color="#a09060" material="roughness:1" shadow="cast:true"></a-box>
+  <a-box position="0 1.3 -6" width="2.5" height="0.5" depth="1.2" color="#b0a070" material="roughness:1"></a-box>
+  <a-sphere position="0 1.65 -6" radius="0.18"
+    color="#ffd700"
+    material="emissive:#ffaa00; emissiveIntensity:0.6; roughness:0; metalness:0.8"
+    animation__float="property: position; to: 0 1.82 -6; dur: 2000; dir: alternate; loop: true; easing: easeInOutSine"
+    animation__spin="property: rotation; to: 0 360 0; dur: 6000; loop: true; easing: linear">
+  </a-sphere>
+  <a-light type="point" color="#ffcc44" intensity="0.5" distance="6" position="0 2.2 -6"
+    animation="property: intensity; to: 0.9; dur: 2000; dir: alternate; loop: true; easing: easeInOutSine">
+  </a-light>
+
+  <!-- ===== VINES ON COLUMNS ===== -->
+  <a-box position="-5.42 1.5  0" width="0.07" height="3" depth="0.07" color="#4a8830" material="roughness:1" rotation="0 0  8"></a-box>
+  <a-box position="-4.58 2   -3" width="0.07" height="2" depth="0.07" color="#508a34" material="roughness:1" rotation="0 0 -5"></a-box>
+  <a-box position="5.42  1.5  0" width="0.07" height="3" depth="0.07" color="#4a8030" material="roughness:1" rotation="0 0 -8"></a-box>
+  <a-box position="4.58  2   -3" width="0.07" height="2" depth="0.07" color="#4a8830" material="roughness:1" rotation="0 0  4"></a-box>
+
+  <!-- ===== TREES ===== -->
+  <a-cylinder position="-10 3.5 -3" radius="0.40" height="7"  color="#4a3020" material="roughness:1" shadow="cast:true"></a-cylinder>
+  <a-sphere   position="-10 8   -3" radius="3"    color="#2d6020" material="roughness:1"></a-sphere>
+  <a-sphere   position="-11 7   -2" radius="2.2"  color="#347028" material="roughness:1"></a-sphere>
+  <a-sphere   position="-9  7.5 -4" radius="1.8"  color="#285818" material="roughness:1"></a-sphere>
+
+  <a-cylinder position="10  3   -3" radius="0.35" height="6"  color="#4a3020" material="roughness:1" shadow="cast:true"></a-cylinder>
+  <a-sphere   position="10  7   -3" radius="2.8"  color="#306822" material="roughness:1"></a-sphere>
+  <a-sphere   position="11  6   -2" radius="2.0"  color="#387030" material="roughness:1"></a-sphere>
+
+  <a-cylinder position="-16 5  -12" radius="0.50" height="10" color="#3a2818" material="roughness:1"></a-cylinder>
+  <a-sphere   position="-16 11 -12" radius="4"    color="#245018" material="roughness:1"></a-sphere>
+  <a-cylinder position="16  4  -12" radius="0.45" height="8"  color="#3a2818" material="roughness:1"></a-cylinder>
+  <a-sphere   position="16  9  -12" radius="3.5"  color="#285a1e" material="roughness:1"></a-sphere>
+  <a-cylinder position="-22 6  -20" radius="0.60" height="12" color="#2e2010" material="roughness:1"></a-cylinder>
+  <a-sphere   position="-22 13 -20" radius="5"    color="#1e4410" material="roughness:1"></a-sphere>
+  <a-cylinder position="20  5  -18" radius="0.50" height="10" color="#2e2010" material="roughness:1"></a-cylinder>
+  <a-sphere   position="20  11 -18" radius="4.5"  color="#224812" material="roughness:1"></a-sphere>
+
+  <!-- ===== TITLE ===== -->
+  <a-text value="Elven Temple Ruins" position="0 6 0" align="center"
+    color="#fff8e0" width="8" font="mozillavr"
+    animation="property: position; to: 0 6.3 0; dur: 4000; dir: alternate; loop: true; easing: easeInOutSine">
+  </a-text>
+
+</a-scene>
+
+<script>
+  setTimeout(() => {
+    const el = document.getElementById('instructions');
+    if (el) el.style.opacity = '0';
+  }, 8000);
+</script>
+
+</body>
+</html><!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Elven Temple Ruins — Day</title>
+  <!-- A-Frame MUST load first, then our components, then aframe-extras -->
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+
+  <script>
+    // =========================================================
+    // COMPONENTS — registered immediately after A-Frame loads,
+    // before any <a-scene> is parsed.
+    // =========================================================
+
+    // ---------------------------------------------------------
+    // 1. TERRAIN FOLLOW + GRAVITY + JUMP LANDING
+    //    - Raycasts down to find ground surface
+    //    - Applies gravity when airborne
+    //    - maxStep limits passive step-up height
+    //    - When jumping (isJumping=true) step limit is lifted
+    //      so the player can land on top of objects they clear
+    //    - Exposes: isGrounded, isJumping, verticalVelocity
+    //      for the locomotion component to read
+    // ---------------------------------------------------------
+    AFRAME.registerComponent('terrain-follow', {
+      schema: {
+        maxStep:   { default: 0.32 },  // ~12 inches, 20% of 1.6m height
+        smoothing: { default: 0.15 },
+        gravity:   { default: 9.8 }
+      },
+      init: function () {
+        this.downRay        = new THREE.Raycaster();
+        this.downDir        = new THREE.Vector3(0, -1, 0);
+        this.origin         = new THREE.Vector3();
+        this.targetY        = null;
+        this.meshes         = null;
+        this.verticalVelocity = 0;
+        this.isGrounded     = true;
+        this.isJumping      = false;  // set true by locomotion on jump press
+
+        this.el.sceneEl.addEventListener('loaded', () => {
+          this.meshes = [];
+          this.el.sceneEl.object3D.traverse(obj => {
+            if (obj.isMesh) this.meshes.push(obj);
+          });
+        });
+      },
+
+      tick: function (time, delta) {
+        if (!this.meshes || this.meshes.length === 0) return;
+        const dt = delta / 1000;
+        const pos = this.el.object3D.position;
+
+        // Cast downward from above the rig
+        this.origin.set(pos.x, pos.y + 4, pos.z);
+        this.downRay.set(this.origin, this.downDir);
+        const hits = this.downRay.intersectObjects(this.meshes, false);
+
+        if (hits.length > 0) {
+          const surfaceY = hits[0].point.y;
           const distAboveSurface = pos.y - surfaceY;
 
           if (distAboveSurface <= 0.05 && this.verticalVelocity <= 0) {
