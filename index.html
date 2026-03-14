@@ -65,14 +65,22 @@
       return null;
     },
 
-    // True if moving in (wx,wz) is blocked above stepHeight
+    // True if moving in (wx,wz) is blocked — checks 3 heights
+    // to catch objects with open space underneath (e.g. architrave)
     blocked: function (pos, wx, wz) {
-      // Ray origin is stepHeight + small buffer above rig
-      this.fwdOrig.set(pos.x, pos.y + this.data.stepHeight + 0.05, pos.z);
       this.fwdDir.set(wx, 0, wz).normalize();
-      this.fwdRay.set(this.fwdOrig, this.fwdDir);
-      this.fwdRay.far = this.data.collisionDist;
-      return this.fwdRay.intersectObjects(this.meshes, false).length > 0;
+      const heights = [
+        this.data.stepHeight + 0.05,  // just above step limit (~0.36m)
+        0.9,                           // mid body
+        1.55                           // head height
+      ];
+      for (const h of heights) {
+        this.fwdOrig.set(pos.x, pos.y + h, pos.z);
+        this.fwdRay.set(this.fwdOrig, this.fwdDir);
+        this.fwdRay.far = this.data.collisionDist;
+        if (this.fwdRay.intersectObjects(this.meshes, false).length > 0) return true;
+      }
+      return false;
     },
 
     tick: function (t, dt) {
