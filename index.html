@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Elven Temple Ruins</title>
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+  <style>
+    body { margin: 0; background: #000; }
+    #instructions {
+      position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+      background: rgba(0,0,0,0.6); color: #aaffcc; font-family: monospace;
+      font-size: 13px; padding: 10px 20px; border-radius: 6px;
+      border: 1px solid rgba(100,255,150,0.3); pointer-events: none;
+      text-align: center; z-index: 999;
+    }
+  </style>
+</head>
+<body>
+
+<div id="instructions">
+  Desktop: WASD to move · Mouse drag to look · Quest: Left stick to move · Right stick to turn
+</div>
+
+<a-scene
+fog=“type: exponential; color: #0a1a0f; density: 0.025”
+shadow=“type: pcfsoft”
+renderer=“antialias: true; colorManagement: true”
+
+  <!-- ===== ASSETS ===== -->
+
+  <a-assets>
+    <!-- Procedural textures via canvas are not needed; we use color + material properties -->
+  </a-assets>
+
+  <!-- ===== CAMERA + CONTROLS ===== -->
+
+  <!-- wasd-controls for desktop, Quest left stick maps to wasd automatically in browser VR -->
+
+  <a-entity id="rig" position="0 0 12">
+    <a-camera
+      wasd-controls="acceleration: 20; fly: false"
+      look-controls="pointerLockEnabled: true"
+      height="1.6"
+    >
+      <!-- Subtle vignette crosshair -->
+      <a-cursor color="#88ffaa" opacity="0.5" raycaster="enabled: false"></a-cursor>
+    </a-camera>
+  </a-entity>
+
+  <!-- ===== SKY ===== -->
+
+<a-sky color="#050f08"></a-sky>
+
+  <!-- Stars -->
+
+  <a-entity id="stars">
+    <a-sphere position="12 18 -20"  radius="0.08" color="#ffffff" material="emissive:#ffffff; emissiveIntensity:1"></a-sphere>
+    <a-sphere position="-15 22 -18" radius="0.06" color="#ffffff" material="emissive:#ffffff; emissiveIntensity:1"></a-sphere>
+    <a-sphere position="5 25 -15"   radius="0.05" color="#aaddff" material="emissive:#aaddff; emissiveIntensity:1"></a-sphere>
+    <a-sphere position="-8 20 -22"  radius="0.07" color="#ffffff" material="emissive:#ffffff; emissiveIntensity:1"></a-sphere>
+    <a-sphere position="20 17 -12"  radius="0.05" color="#ffeedd" material="emissive:#ffeedd; emissiveIntensity:1"></a-sphere>
+    <a-sphere position="-20 24 -10" radius="0.06" color="#ffffff" material="emissive:#ffffff; emissiveIntensity:1"></a-sphere>
+    <a-sphere position="3 28 -8"    radius="0.04" color="#aaffcc" material="emissive:#aaffcc; emissiveIntensity:1"></a-sphere>
+    <a-sphere position="-3 19 -25"  radius="0.07" color="#ffffff" material="emissive:#ffffff; emissiveIntensity:1"></a-sphere>
+    <a-sphere position="18 23 -5"   radius="0.05" color="#ddeeff" material="emissive:#ddeeff; emissiveIntensity:1"></a-sphere>
+    <a-sphere position="-12 26 -6"  radius="0.04" color="#ffffff" material="emissive:#ffffff; emissiveIntensity:1"></a-sphere>
+  </a-entity>
+
+  <!-- Moon -->
+
+<a-sphere position="-20 30 -60" radius="4" color="#c8e8c0" material="emissive:#a0c890; emissiveIntensity:0.4; roughness:1"></a-sphere>
+
+  <!-- ===== LIGHTING ===== -->
+
+<a-light type="ambient" color="#1a3322" intensity="0.8"></a-light>
+
+  <!-- Moonlight -->
+
+<a-light type="directional" color="#7ab89a" intensity="0.6" position="-3 8 -5" cast-shadow="true"></a-light>
+
+  <!-- Warm fill from below (fire/glow suggestion) -->
+
+<a-light type="point" color="#33ff88" intensity="0.4" distance="30" position="0 0.5 0"></a-light>
+
+  <!-- ===== GROUND ===== -->
+
+<a-plane
+position=“0 0 0” rotation=”-90 0 0” width=“80” height=“80”
+color=”#1a2e1a”
+material=“roughness: 1; metalness: 0”
+shadow=“receive: true”
+
+> </a-plane>
+
+  <!-- Ground detail — moss patches -->
+
+<a-plane position="3 0.01 4"   rotation="-90 0 30"  width="3" height="2" color="#1f3d1a" material="roughness:1; opacity:0.8; transparent:true"></a-plane>
+<a-plane position="-5 0.01 2"  rotation="-90 0 10"  width="2" height="3" color="#223d1f" material="roughness:1; opacity:0.7; transparent:true"></a-plane>
+<a-plane position="0 0.01 -5"  rotation="-90 0 50"  width="4" height="2" color="#1a3320" material="roughness:1; opacity:0.8; transparent:true"></a-plane>
+<a-plane position="-7 0.01 -8" rotation="-90 0 20"  width="3" height="3" color="#1f3d1a" material="roughness:1; opacity:0.7; transparent:true"></a-plane>
+
+  <!-- ===== TEMPLE STEPS (approach from z=12) ===== -->
+
+<a-box position="0 0.1 4"  width="10" height="0.2" depth="2" color="#2e3d2a" material="roughness:1"></a-box>
+<a-box position="0 0.3 3"  width="9"  height="0.2" depth="1.8" color="#2a3a27" material="roughness:1"></a-box>
+<a-box position="0 0.5 2"  width="8.5" height="0.2" depth="1.8" color="#273726" material="roughness:1"></a-box>
+
+  <!-- ===== TEMPLE FLOOR / PLATFORM ===== -->
+
+<a-box position="0 0.6 -2" width="14" height="0.2" depth="12" color="#263525" material="roughness:1" shadow="receive:true"></a-box>
+
+  <!-- Floor cracks / detail tiles -->
+
+<a-box position="-2 0.71 -1" width="0.05" height="0.02" depth="6" color="#1a2a18" material="roughness:1"></a-box>
+<a-box position="2 0.71 -1"  width="0.05" height="0.02" depth="6" color="#1a2a18" material="roughness:1"></a-box>
+<a-box position="0 0.71 1"   width="8"    height="0.02" depth="0.05" color="#1a2a18" material="roughness:1"></a-box>
+<a-box position="0 0.71 -1"  width="8"    height="0.02" depth="0.05" color="#1a2a18" material="roughness:1"></a-box>
+<a-box position="0 0.71 -3"  width="8"    height="0.02" depth="0.05" color="#1a2a18" material="roughness:1"></a-box>
+
+  <!-- ===== COLUMNS (6 columns, 3 each side) ===== -->
+
+  <!-- Left columns -->
+
+  <a-cylinder position="-5 2.3 0"  radius="0.4" height="4.5" color="#2d4030" material="roughness:1" shadow="cast:true; receive:true">
+    <a-cylinder position="0 2.4 0" radius="0.5" height="0.3" color="#253826" material="roughness:1"></a-cylinder><!-- capital -->
+    <a-cylinder position="0 -2.4 0" radius="0.5" height="0.3" color="#253826" material="roughness:1"></a-cylinder><!-- base -->
+  </a-cylinder>
+  <a-cylinder position="-5 2.3 -3" radius="0.4" height="4.5" color="#2d4030" material="roughness:1" shadow="cast:true">
+    <a-cylinder position="0 2.4 0" radius="0.5" height="0.3" color="#253826" material="roughness:1"></a-cylinder>
+    <a-cylinder position="0 -2.4 0" radius="0.5" height="0.3" color="#253826" material="roughness:1"></a-cylinder>
+  </a-cylinder>
+  <!-- Broken left column (shorter, tilted) -->
+  <a-cylinder position="-5 1.5 -6" radius="0.4" height="2.8" color="#2a3a2a" material="roughness:1" rotation="0 0 8" shadow="cast:true">
+    <a-cylinder position="0 -1.5 0" radius="0.5" height="0.3" color="#253826" material="roughness:1"></a-cylinder>
+  </a-cylinder>
+  <!-- Fallen column chunk -->
+  <a-cylinder position="-6 0.85 -7.5" radius="0.4" height="2.5" color="#2a3a2a" material="roughness:1" rotation="0 30 90"></a-cylinder>
+
+  <!-- Right columns -->
+
+  <a-cylinder position="5 2.3 0"   radius="0.4" height="4.5" color="#2d4030" material="roughness:1" shadow="cast:true">
+    <a-cylinder position="0 2.4 0" radius="0.5" height="0.3" color="#253826" material="roughness:1"></a-cylinder>
+    <a-cylinder position="0 -2.4 0" radius="0.5" height="0.3" color="#253826" material="roughness:1"></a-cylinder>
+  </a-cylinder>
+  <a-cylinder position="5 2.3 -3"  radius="0.4" height="4.5" color="#2d4030" material="roughness:1" shadow="cast:true">
+    <a-cylinder position="0 2.4 0" radius="0.5" height="0.3" color="#253826" material="roughness:1"></a-cylinder>
+    <a-cylinder position="0 -2.4 0" radius="0.5" height="0.3" color="#253826" material="roughness:1"></a-cylinder>
+  </a-cylinder>
+  <!-- Broken right column -->
+  <a-cylinder position="5 1.9 -6"  radius="0.4" height="3.5" color="#2a3a2a" material="roughness:1" rotation="0 0 -5" shadow="cast:true">
+    <a-cylinder position="0 -1.8 0" radius="0.5" height="0.3" color="#253826" material="roughness:1"></a-cylinder>
+  </a-cylinder>
+
+  <!-- ===== ARCHITRAVE (beam across top of front columns) ===== -->
+
+<a-box position="0 4.7 0" width="11" height="0.5" depth="0.8" color="#263826" material="roughness:1" shadow="cast:true"></a-box>
+
+  <!-- Partially collapsed back beam -->
+
+<a-box position="1 4.4 -3" width="9" height="0.5" depth="0.8" color="#222e22" material="roughness:1" rotation="0 0 -4"></a-box>
+
+  <!-- ===== BACK WALL (partially standing) ===== -->
+
+<a-box position="-3 2 -7.5" width="5"  height="4" depth="0.6" color="#243224" material="roughness:1" shadow="cast:true"></a-box>
+<a-box position="4  1.5 -7.5" width="3" height="3" depth="0.6" color="#243224" material="roughness:1"></a-box>
+
+  <!-- Rubble chunks at wall base -->
+
+<a-box position="-6 0.85 -7.5" width="1.5" height="0.8" depth="1.2" color="#1f2e1f" material="roughness:1"></a-box>
+<a-box position="7  0.85 -7"   width="1.2" height="0.7" depth="1.0" color="#1f2e1f" material="roughness:1" rotation="0 20 0"></a-box>
+<a-box position="6  0.75 -6"   width="0.8" height="0.5" depth="0.8" color="#1f2e1f" material="roughness:1" rotation="0 40 0"></a-box>
+
+  <!-- ===== ALTAR ===== -->
+
+<a-box position="0 0.9 -6" width="3" height="0.6" depth="1.5" color="#2a3d2a" material="roughness:1" shadow="cast:true"></a-box>
+<a-box position="0 1.3 -6" width="2.5" height="0.5" depth="1.2" color="#2e4430" material="roughness:1"></a-box>
+
+  <!-- Glowing altar gem -->
+
+<a-sphere position="0 1.65 -6" radius="0.18" color="#00ff88"
+material="emissive:#00ff88; emissiveIntensity:0.8; roughness:0; metalness:0.2"
+animation="property: position; to: 0 1.8 -6; dur: 2000; dir: alternate; loop: true; easing: easeInOutSine">
+</a-sphere>
+
+  <!-- Altar glow light -->
+
+<a-light type="point" color="#00ff88" intensity="0.6" distance="8" position="0 2 -6"
+animation="property: intensity; to: 1; dur: 2000; dir: alternate; loop: true; easing: easeInOutSine">
+</a-light>
+
+  <!-- ===== SCATTERED RUBBLE ===== -->
+
+<a-box position="3  0.75 2"   width="1.2" height="0.5" depth="0.9" color="#1e2e1e" material="roughness:1" rotation="0 25 0"></a-box>
+<a-box position="-4 0.75 1"   width="1.0" height="0.4" depth="0.8" color="#1e2e1e" material="roughness:1" rotation="0 10 5"></a-box>
+<a-box position="2  0.75 -4"  width="0.9" height="0.6" depth="0.7" color="#222e22" material="roughness:1" rotation="0 60 0"></a-box>
+<a-box position="-3 0.75 -4"  width="1.1" height="0.5" depth="1.0" color="#1e2e1e" material="roughness:1" rotation="0 -15 3"></a-box>
+<a-box position="6  0.75 -1"  width="0.8" height="0.4" depth="0.9" color="#1a2a1a" material="roughness:1" rotation="0 45 0"></a-box>
+<a-box position="-6 0.75 -2"  width="1.0" height="0.5" depth="0.8" color="#1a2a1a" material="roughness:1" rotation="0 30 -5"></a-box>
+
+  <!-- ===== GLOWING VINES on columns ===== -->
+
+  <!-- Vine strips (thin boxes with emissive green) -->
+
+<a-box position="-5.42 1.5 0"   width="0.06" height="3" depth="0.06" color="#00cc55" material="emissive:#003311; emissiveIntensity:0.4; roughness:1" rotation="0 0 8"></a-box>
+<a-box position="-4.58 2 -3"    width="0.06" height="2" depth="0.06" color="#00cc55" material="emissive:#003311; emissiveIntensity:0.3; roughness:1" rotation="0 0 -5"></a-box>
+<a-box position="5.42  1.5 0"   width="0.06" height="3" depth="0.06" color="#00aa44" material="emissive:#002211; emissiveIntensity:0.4; roughness:1" rotation="0 0 -8"></a-box>
+<a-box position="4.58  2 -3"    width="0.06" height="2" depth="0.06" color="#00cc55" material="emissive:#003311; emissiveIntensity:0.3; roughness:1" rotation="0 0 4"></a-box>
+
+  <!-- Vine on back wall -->
+
+<a-box position="-1 2.5 -7.2"   width="0.06" height="4" depth="0.06" color="#00bb44" material="emissive:#002211; emissiveIntensity:0.5; roughness:1" rotation="0 0 15"></a-box>
+<a-box position="-3.5 1.5 -7.2" width="0.06" height="3" depth="0.06" color="#00cc55" material="emissive:#003311; emissiveIntensity:0.4; roughness:1" rotation="0 0 -10"></a-box>
+
+  <!-- ===== FLOATING WISPS ===== -->
+
+<a-sphere position="-3 2 -2" radius="0.12" color="#88ffcc"
+material="emissive:#44ffaa; emissiveIntensity:0.9; opacity:0.8; transparent:true"
+animation__pos="property: position; to: -2.5 2.8 -1.5; dur: 3500; dir: alternate; loop: true; easing: easeInOutSine"
+animation__glow="property: material.emissiveIntensity; to: 0.3; dur: 2000; dir: alternate; loop: true">
+</a-sphere>
+<a-sphere position="4 1.8 -5" radius="0.10" color="#aaffdd"
+material="emissive:#55ffbb; emissiveIntensity:0.8; opacity:0.7; transparent:true"
+animation__pos="property: position; to: 3.5 2.5 -4.5; dur: 4200; dir: alternate; loop: true; easing: easeInOutSine"
+animation__glow="property: material.emissiveIntensity; to: 0.2; dur: 2500; dir: alternate; loop: true">
+</a-sphere>
+<a-sphere position="0 3 -3" radius="0.08" color="#ccffee"
+material="emissive:#66ffcc; emissiveIntensity:0.7; opacity:0.6; transparent:true"
+animation__pos="property: position; to: 0.5 3.5 -2; dur: 5000; dir: alternate; loop: true; easing: easeInOutSine">
+</a-sphere>
+
+  <!-- ===== ANCIENT TREES (flanking) ===== -->
+
+  <!-- Left tree -->
+
+<a-cylinder position="-10 3 -3" radius="0.35" height="6" color="#1a2a18" material="roughness:1"></a-cylinder>
+<a-sphere   position="-10 7 -3" radius="2.5" color="#1a3a18" material="roughness:1; opacity:0.9; transparent:true"></a-sphere>
+<a-sphere   position="-11 6 -2" radius="1.8" color="#162e14" material="roughness:1; opacity:0.85; transparent:true"></a-sphere>
+
+  <!-- Bioluminescent leaves -->
+
+<a-sphere position="-9.5 7.5 -2.5" radius="0.4" color="#00ff88" material="emissive:#00ff44; emissiveIntensity:0.3; opacity:0.6; transparent:true"></a-sphere>
+<a-sphere position="-10.5 8 -3.5" radius="0.3" color="#44ffaa" material="emissive:#00ff44; emissiveIntensity:0.3; opacity:0.5; transparent:true"></a-sphere>
+
+  <!-- Right tree -->
+
+<a-cylinder position="10 3 -3"  radius="0.3"  height="5.5" color="#1a2a18" material="roughness:1"></a-cylinder>
+<a-sphere   position="10 7 -3"  radius="2.2"  color="#182e16" material="roughness:1; opacity:0.9; transparent:true"></a-sphere>
+<a-sphere   position="11 6 -2"  radius="1.6"  color="#1a3018" material="roughness:1; opacity:0.85; transparent:true"></a-sphere>
+<a-sphere   position="9.5 7.5 -2.5" radius="0.35" color="#00ff88" material="emissive:#00ff44; emissiveIntensity:0.3; opacity:0.6; transparent:true"></a-sphere>
+
+  <!-- Background trees (atmosphere) -->
+
+<a-cylinder position="-14 4 -10" radius="0.4" height="8" color="#141e12" material="roughness:1"></a-cylinder>
+<a-sphere   position="-14 9 -10" radius="3"   color="#101e10" material="roughness:1; opacity:0.8; transparent:true"></a-sphere>
+<a-cylinder position="14 3.5 -10" radius="0.35" height="7" color="#141e12" material="roughness:1"></a-cylinder>
+<a-sphere   position="14 8 -10"  radius="2.8"  color="#0f1e0f" material="roughness:1; opacity:0.8; transparent:true"></a-sphere>
+
+  <!-- ===== MIST EFFECT (low floating planes) ===== -->
+
+<a-plane position="0 0.3 0"  rotation="-90 0 0" width="30" height="30"
+color="#1a3322"
+material="opacity:0.15; transparent:true; roughness:1; side:double"
+animation="property: position; to: 0 0.6 0; dur: 6000; dir: alternate; loop: true; easing: easeInOutSine">
+</a-plane>
+<a-plane position="0 0.5 -5" rotation="-90 10 0" width="20" height="15"
+color="#1a3322"
+material="opacity:0.1; transparent:true; roughness:1; side:double"
+animation="property: position; to: 0 0.8 -5; dur: 8000; dir: alternate; loop: true; easing: easeInOutSine">
+</a-plane>
+
+  <!-- ===== TITLE TEXT ===== -->
+
+<a-text
+value="Elven Temple Ruins"
+position="0 5.5 0"
+align="center"
+color="#88ffcc"
+width="8"
+font="mozillavr"
+material="emissive:#88ffcc; emissiveIntensity:0.3"
+animation="property: position; to: 0 5.8 0; dur: 4000; dir: alternate; loop: true; easing: easeInOutSine">
+</a-text>
+
+</a-scene>
+
+<script>
+  // Hide instructions after 8 seconds
+  setTimeout(() => {
+    const el = document.getElementById('instructions');
+    if (el) el.style.opacity = '0';
+    el.style.transition = 'opacity 1s';
+  }, 8000);
+</script>
+
+</body>
+</html>
