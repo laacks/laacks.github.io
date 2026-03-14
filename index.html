@@ -64,37 +64,42 @@
 
     // ---------------------------------------------------------
     // 2. VR THUMBSTICK LOCOMOTION
-    //    Reads the left gamepad thumbstick axes directly via
-    //    the WebXR / Gamepad API each frame and moves the rig.
-    //    Works in Quest browser VR mode where aframe-extras
-    //    movement-controls can stall after entering VR.
+    //    In VR: reads axes from WebXR inputSources directly,
+    //    which is the only reliable method in Quest browser.
+    //    On desktop: WASD keyboard fallback.
     // ---------------------------------------------------------
     AFRAME.registerComponent('vr-locomotion', {
       schema: {
-        speed:    { default: 3.0 },
-        turnSpeed:{ default: 1.5 }
+        speed:     { default: 3.0 },
+        turnSpeed: { default: 1.5 }
       },
       init: function () {
         this.vec    = new THREE.Vector3();
-        this.euler  = new THREE.Euler();
         this.camera = null;
-        // Keyboard state for desktop fallback
+        this.isVR   = false;
+
+        // Keyboard state
         this.keys = {};
         this._onKeyDown = (e) => { this.keys[e.code] = true; };
         this._onKeyUp   = (e) => { this.keys[e.code] = false; };
         window.addEventListener('keydown', this._onKeyDown);
         window.addEventListener('keyup',   this._onKeyUp);
+
+        // Track VR mode
+        this.el.sceneEl.addEventListener('enter-vr',  () => { this.isVR = true;  });
+        this.el.sceneEl.addEventListener('exit-vr',   () => { this.isVR = false; });
       },
+
       remove: function () {
         window.removeEventListener('keydown', this._onKeyDown);
         window.removeEventListener('keyup',   this._onKeyUp);
       },
+
       tick: function (time, delta) {
         if (!delta) return;
         const dt = delta / 1000;
         const rig = this.el;
 
-        // Grab camera if not yet found
         if (!this.camera) {
           this.camera = rig.querySelector('[camera]');
           if (!this.camera) return;
@@ -102,37 +107,47 @@
 
         let moveX = 0, moveZ = 0, turn = 0;
 
-        // --- Gamepad (Quest controllers) ---
-        const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
-        for (let i = 0; i < gamepads.length; i++) {
-          const gp = gamepads[i];
-          if (!gp) continue;
-          // Left stick: axes 0 (strafe) and 1 (forward)
-          if (Math.abs(gp.axes[0]) > 0.15) moveX += gp.axes[0];
-          if (Math.abs(gp.axes[1]) > 0.15) moveZ += gp.axes[1];
-          // Right stick: axes 2 (turn)
-          if (Math.abs(gp.axes[2]) > 0.15) turn   += gp.axes[2];
+        if (this.isVR) {
+          // --- WebXR input sources (Quest controllers in VR) ---
+          const xrSession = this.el.sceneEl.xrSession;
+          if (xrSession && xrSession.inputSources) {
+            for (const source of xrSession.inputSources) {
+              if (!source.gamepad) continue;
+              const axes = source.gamepad.axes;
+              if (source.handedness === 'left') {
+                // Left stick: axes[2] = strafe, axes[3] = forward
+                if (axes.length > 3) {
+                  if (Math.abs(axes[2]) > 0.15) moveX += axes[2];
+                  if (Math.abs(axes[3]) > 0.15) moveZ += axes[3];
+                }
+              } else if (source.handedness === 'right') {
+                // Right stick: axes[2] = turn
+                if (axes.length > 2) {
+                  if (Math.abs(axes[2]) > 0.15) turn += axes[2];
+                }
+              }
+            }
+          }
+        } else {
+          // --- Keyboard fallback (desktop) ---
+          if (this.keys['KeyW'] || this.keys['ArrowUp'])    moveZ -= 1;
+          if (this.keys['KeyS'] || this.keys['ArrowDown'])  moveZ += 1;
+          if (this.keys['KeyA'] || this.keys['ArrowLeft'])  moveX -= 1;
+          if (this.keys['KeyD'] || this.keys['ArrowRight']) moveX += 1;
         }
-
-        // --- Keyboard fallback (desktop WASD) ---
-        if (this.keys['KeyW'] || this.keys['ArrowUp'])    moveZ -= 1;
-        if (this.keys['KeyS'] || this.keys['ArrowDown'])  moveZ += 1;
-        if (this.keys['KeyA'] || this.keys['ArrowLeft'])  moveX -= 1;
-        if (this.keys['KeyD'] || this.keys['ArrowRight']) moveX += 1;
 
         if (moveX === 0 && moveZ === 0 && turn === 0) return;
 
-        // Apply turning
+        // Turn
         if (turn !== 0) {
           rig.object3D.rotation.y -= turn * this.data.turnSpeed * dt;
         }
 
-        // Move relative to camera's Y rotation so you go where you look
-        const camYaw = this.camera.object3D.rotation.y + rig.object3D.rotation.y;
-        this.vec.set(moveX, 0, moveZ).normalize();
-        const cos = Math.cos(camYaw), sin = Math.sin(camYaw);
-        const wx = this.vec.x * cos - this.vec.z * sin;
-        const wz = this.vec.x * sin + this.vec.z * cos;
+        // Move relative to where the player is facing
+        const yaw = rig.object3D.rotation.y;
+        const cos = Math.cos(yaw), sin = Math.sin(yaw);
+        const wx = moveX * cos - moveZ * sin;
+        const wz = moveX * sin + moveZ * cos;
 
         const spd = this.data.speed * dt;
         rig.object3D.position.x += wx * spd;
