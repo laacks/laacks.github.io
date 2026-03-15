@@ -1,332 +1,223 @@
 // =============================================================
-// interactables.js
+// character.js
+// Player movement, collision, jumping and gravity for WebXR.
+//
+// Controls:
+//   Left stick       move
+//   Right stick X    snap turn
+//   A button         jump
+//   Y button         toggle inventory panel
+//
+// Emits scene events:
+//   'inventory-toggle'   when Y is pressed
+//   'hip-zone-enter'     when right controller enters hip zone
+//   'hip-zone-exit'      when right controller leaves hip zone
 // =============================================================
 
-AFRAME.registerComponent('sword-in-stone', {
+AFRAME.registerComponent('player-move', {
   schema: {
-    position: { type: 'vec3', default: { x: 0, y: 0.9, z: -7.5 } },
-    grabDist:  { default: 0.6 },
-    gravity:   { default: 9.8 },
-    scale:     { default: 1.0 }
+    speed:      { default: 2.5  },
+    turnSpeed:  { default: 60   },
+    stepHeight: { default: 0.31 },
+    jumpHeight: { default: 0.61 },
+    gravity:    { default: 9.8  }
   },
 
   init: function () {
-    this.held        = false;
-    this.triggerDown = false;
-    this.sheathed    = false;
-    this.dropped     = false;
-    this.dropVel     = 0;
-    this.dropPos     = new THREE.Vector3(); // world pos at moment of drop
-    this.dropRotY    = 0;                   // horizontal rotation to preserve on land
-    this.controller  = null;
-    this.rig         = null;
-    this.swordEl     = null;
+    this.vel         = 0;
+    this.grounded    = true;
+    this.prevA       = false;  // A button edge detect (jump)
+    this.prevY       = false;  // Y button edge detect (inventory)
+    this.inHipZone   = false;  // is right controller near hip?
     this.meshes      = [];
-    this.inHipZone   = false;
 
-    // THREE objects — lazy init
+    // THREE objects — lazy init on first tick
     this.downRay  = null;
-    this.tipRay   = null;
-    this.tipDir   = null;
-    this.tipOrig  = null;
+    this.fwdRay   = null;
+    this.fwdDir   = null;
+    this.downOrig = null;
+    this.fwdOrig  = null;
     this.DOWN     = null;
 
-    // Position altar entity
-    this.el.object3D.position.set(
-      this.data.position.x,
-      this.data.position.y,
-      this.data.position.z
-    );
-
-    // Stone block
-    const stone = document.createElement('a-box');
-    stone.setAttribute('width',    '0.55');
-    stone.setAttribute('height',   '0.55');
-    stone.setAttribute('depth',    '0.55');
-    stone.setAttribute('color',    '#888070');
-    stone.setAttribute('material', 'roughness: 1');
-    this.el.appendChild(stone);
-
-    // Sword GLB — attached directly to scene root
-    // so its position/rotation are in world space
-    const sc = this.data.scale;
-    const sword = document.createElement('a-gltf-model');
-    sword.setAttribute('id',     'sword');
-    const sp = this.data.position;
-    sword.setAttribute('src',      'models/Sword606.glb');
-    sword.setAttribute('scale',    `${sc} ${sc} ${sc}`);
-
-    // Start position: sticking up out of stone
-    sword.object3D.position.set(sp.x, sp.y + 0.85, sp.z);
-    sword.object3D.rotation.set(
-      THREE.MathUtils.degToRad(-90), 0, 0
-    );
-
-    sword.setAttribute('animation__pulse',
-      `property: object3D.scale; from: ${sc} ${sc} ${sc}; ` +
-      `to: ${sc*1.04} ${sc*1.04} ${sc*1.04}; ` +
-      'dur: 1500; dir: alternate; loop: true; easing: easeInOutSine');
-
-    this.swordEl = sword;
-
-    // Apply material fix when model first loads
-    sword.addEventListener('model-loaded', () => {
-      this._fixMaterials();
-    });
-
-    // Altar glow light
-    const light = document.createElement('a-light');
-    light.setAttribute('type',      'point');
-    light.setAttribute('color',     '#ffdd88');
-    light.setAttribute('intensity', '0.6');
-    light.setAttribute('distance',  '5');
-    light.setAttribute('position',  `${sp.x} ${sp.y + 1.5} ${sp.z}`);
-    light.setAttribute('animation',
-      'property: intensity; from: 0.4; to: 0.9; ' +
-      'dur: 2500; dir: alternate; loop: true; easing: easeInOutSine');
-
     this.el.sceneEl.addEventListener('loaded', () => {
-      this.el.sceneEl.appendChild(sword);
-      this.el.sceneEl.appendChild(light);
       setTimeout(() => {
-        this.controller = document.querySelector('#rc');
-        this.rig        = document.querySelector('#rig');
-
-        // Build mesh list excluding the sword's own meshes
-        // to prevent self-collision pushing the sword away
-        const swordMeshes = new Set();
-        if (this.swordEl) {
-          this.swordEl.object3D.traverse(o => {
-            if (o.isMesh) swordMeshes.add(o);
-          });
-        }
-        this.el.sceneEl.object3D.traverse(o => {
-          if (o.isMesh && !swordMeshes.has(o)) this.meshes.push(o);
+        // Cache scene meshes for raycasting.
+        // Exclude the sword (moves dynamically) and the rig/controllers
+        // so the player doesn't collide with their own body or held items.
+        const excluded = new Set();
+        ['#sword', '#rc', '#lc'].forEach(sel => {
+          const el = document.querySelector(sel);
+          if (el) el.object3D.traverse(o => { if (o.isMesh) excluded.add(o); });
         });
-      }, 600);
-    });
-
-    this.el.sceneEl.addEventListener('hip-zone-enter', () => { this.inHipZone = true;  });
-    this.el.sceneEl.addEventListener('hip-zone-exit',  () => { this.inHipZone = false; });
-  },
-
-  // Force all GLB materials opaque — must be called every grab
-  // because Three.js re-processes materials when object moves
-  _fixMaterials: function () {
-    if (!this.swordEl) return;
-    const model = this.swordEl.getObject3D('mesh');
-    if (!model) return;
-    model.traverse(node => {
-      if (!node.isMesh) return;
-      const mats = Array.isArray(node.material)
-        ? node.material : [node.material];
-      mats.forEach(m => {
-        if (!m) return;
-        m.transparent    = false;
-        m.opacity        = 1;
-        m.depthWrite     = true;
-        m.depthTest      = true;
-        m.needsUpdate    = true;
-      });
+        this.el.sceneEl.object3D.traverse(o => {
+          if (o.isMesh && !excluded.has(o)) this.meshes.push(o);
+        });
+      }, 500);
     });
   },
 
-  // Hip scabbard world position — right side of character, blade pointing down
-  _hipWorldPos: function () {
-    if (!this.rig) return null;
-    const rp  = this.rig.object3D.position;
-    const ry  = this.rig.object3D.rotation.y;
-    return new THREE.Vector3(
-      rp.x + Math.sin(ry + Math.PI / 2) * 0.3,
-      rp.y + 0.9,
-      rp.z + Math.cos(ry + Math.PI / 2) * 0.3
-    );
+  groundAt: function (x, z, fromY) {
+    if (!this.downRay) return null;
+    this.downOrig.set(x, fromY, z);
+    this.downRay.set(this.downOrig, this.DOWN);
+    const hits = this.downRay.intersectObjects(this.meshes, false);
+    for (const h of hits) {
+      if (h.point.y < fromY - 0.01) return h.point.y;
+    }
+    return null;
+  },
+
+  blocked: function (pos, wx, wz) {
+    if (!this.fwdRay) return false;
+    this.fwdDir.set(wx, -3.73, wz).normalize();
+    this.fwdOrig.set(pos.x, pos.y + 1.85, pos.z);
+    this.fwdRay.set(this.fwdOrig, this.fwdDir);
+    this.fwdRay.near = 0;
+    this.fwdRay.far  = 1.95;
+    const hits = this.fwdRay.intersectObjects(this.meshes, false);
+    if (hits.length === 0) return false;
+    return hits[0].point.y > pos.y + this.data.stepHeight;
+  },
+
+  // Check if right controller is in hip scabbard zone.
+  // Hip zone = roughly 0.3m to the right and 0.8-1.0m below head height,
+  // within 0.25m radius. This approximates where a scabbard would sit.
+  checkHipZone: function (session, rigPos) {
+    if (!session) return false;
+    for (const src of session.inputSources) {
+      if (src.handedness !== 'right') continue;
+      const rc = document.querySelector('#rc');
+      if (!rc) continue;
+      const cp = new THREE.Vector3();
+      rc.object3D.getWorldPosition(cp);
+
+      // Hip zone center in world space:
+      // right side of body = rig X + 0.3m in rig-right direction
+      // height = rig Y + ~0.9m (waist level for 6ft1 character)
+      const hipX = rigPos.x + Math.sin(this.el.object3D.rotation.y + Math.PI / 2) * 0.3;
+      const hipY = rigPos.y + 0.9;
+      const hipZ = rigPos.z + Math.cos(this.el.object3D.rotation.y + Math.PI / 2) * 0.3;
+
+      const dist = Math.sqrt(
+        Math.pow(cp.x - hipX, 2) +
+        Math.pow(cp.y - hipY, 2) +
+        Math.pow(cp.z - hipZ, 2)
+      );
+      return dist < 0.25;
+    }
+    return false;
   },
 
   tick: function (t, dt) {
-    if (!this.controller || !this.swordEl) return;
     if (!dt) return;
-    const sec = dt / 1000;
 
-    // Lazy-init THREE objects
+    // Lazy-init THREE objects on first tick
     if (!this.downRay) {
-      this.downRay = new THREE.Raycaster();
-      this.tipRay  = new THREE.Raycaster();
-      this.tipDir  = new THREE.Vector3();
-      this.tipOrig = new THREE.Vector3();
-      this.DOWN    = new THREE.Vector3(0, -1, 0);
+      this.downRay  = new THREE.Raycaster();
+      this.fwdRay   = new THREE.Raycaster();
+      this.fwdDir   = new THREE.Vector3();
+      this.downOrig = new THREE.Vector3();
+      this.fwdOrig  = new THREE.Vector3();
+      this.DOWN     = new THREE.Vector3(0, -1, 0);
       return;
     }
 
-    // Read right trigger
-    let trig = false;
+    const sec     = dt / 1000;
+    const rig     = this.el.object3D;
+    const pos     = rig.position;
     const session = this.el.sceneEl.xrSession;
+
+    // Read XR input
+    let mx = 0, mz = 0, turn = 0;
+    let jumpBtn = false, yBtn = false;
+
     if (session) {
       for (const src of session.inputSources) {
-        if (src.handedness === 'right' && src.gamepad) {
-          const b = src.gamepad.buttons[0];
-          if (b && b.value > 0.5) trig = true;
+        if (!src.gamepad) continue;
+        const ax = src.gamepad.axes;
+        const bt = src.gamepad.buttons;
+        if (src.handedness === 'left') {
+          if (ax.length > 3) {
+            if (Math.abs(ax[2]) > 0.15) mx += ax[2];
+            if (Math.abs(ax[3]) > 0.15) mz += ax[3];
+          }
+          // Y button = left controller button index 5
+          if (bt && bt[5] && bt[5].pressed) yBtn = true;
+        } else if (src.handedness === 'right') {
+          if (ax.length > 2 && Math.abs(ax[2]) > 0.15) turn += ax[2];
+          // A button = right controller button index 4
+          if (bt && bt[4] && bt[4].pressed) jumpBtn = true;
         }
       }
     }
 
-    // Current world positions
-    const sWorldPos = new THREE.Vector3();
-    const cp        = new THREE.Vector3();
-    this.swordEl.object3D.getWorldPosition(sWorldPos);
-    this.controller.object3D.getWorldPosition(cp);
+    // Y button — toggle inventory (edge trigger)
+    if (yBtn && !this.prevY) {
+      this.el.sceneEl.emit('inventory-toggle');
+    }
+    this.prevY = yBtn;
 
-    // ================================================================
-    // SHEATHED — follows hip
-    // ================================================================
-    if (this.sheathed) {
-      const hipPos = this._hipWorldPos();
-      if (hipPos && this.rig) {
-        this.swordEl.object3D.position.copy(hipPos);
-        // Point blade DOWN at hip — handle up, tip down
-        // Rig Y rotation + 90° tilt so blade hangs vertically
-        const ry = this.rig.object3D.rotation.y;
-        this.swordEl.object3D.rotation.set(
-          THREE.MathUtils.degToRad(90),  // tip points down
-          ry,                             // face same direction as character
-          0
-        );
-      }
-      // Grab from scabbard
-      if (trig && !this.triggerDown && sWorldPos.distanceTo(cp) < this.data.grabDist) {
-        this.sheathed = false;
-        this.held     = true;
-        this.el.sceneEl.emit('inventory-update', { item: 'sword', state: 'held' });
-      }
-      this.triggerDown = trig;
-      return;
+    // Hip zone detection — emit events for scabbard snapping
+    const nowInHip = this.checkHipZone(session, pos);
+    if (nowInHip && !this.inHipZone) {
+      this.el.sceneEl.emit('hip-zone-enter');
+    } else if (!nowInHip && this.inHipZone) {
+      this.el.sceneEl.emit('hip-zone-exit');
+    }
+    this.inHipZone = nowInHip;
+
+    // Snap turn
+    if (turn !== 0) {
+      rig.rotation.y -= turn *
+        THREE.MathUtils.degToRad(this.data.turnSpeed) * sec;
     }
 
-    // ================================================================
-    // IDLE — in stone on altar
-    // ================================================================
-    if (!this.held && !this.dropped) {
-      if (trig && !this.triggerDown && sWorldPos.distanceTo(cp) < this.data.grabDist) {
-        this.held = true;
-        this.swordEl.removeAttribute('animation__pulse');
-        this.el.sceneEl.emit('inventory-update', { item: 'sword', state: 'held' });
-        this._fixMaterials();
+    // Movement direction = rig yaw + camera yaw
+    const cam    = this.el.querySelector('[camera]');
+    const camYaw = cam ? cam.object3D.rotation.y : 0;
+    const yaw    = rig.rotation.y + camYaw;
+    const cos    = Math.cos(yaw), sin = Math.sin(yaw);
+    const wx     =  mx * cos + mz * sin;
+    const wz     = -mx * sin + mz * cos;
+
+    // Horizontal movement with collision
+    if (wx !== 0 || wz !== 0) {
+      const spd = this.data.speed * sec;
+      if (!this.blocked(pos, wx, wz)) {
+        pos.x += wx * spd;
+        pos.z += wz * spd;
+      } else {
+        if (!this.blocked(pos, wx, 0))  pos.x += wx * spd;
+        if (!this.blocked(pos, 0,  wz)) pos.z += wz * spd;
       }
-      this.triggerDown = trig;
-      return;
     }
 
-    // ================================================================
-    // HELD — follows controller
-    // ================================================================
-    if (this.held) {
-      // Fix materials every tick while held to prevent transparency creep
-      this._fixMaterials();
+    // Jump
+    if (jumpBtn && !this.prevA && this.grounded) {
+      this.vel = Math.sqrt(2 * this.data.gravity * this.data.jumpHeight);
+      this.grounded = false;
+    }
+    this.prevA = jumpBtn;
 
-      const cr = new THREE.Quaternion();
-      this.controller.object3D.getWorldQuaternion(cr);
-
-      // -90° X so blade points forward along controller
-      const offset     = new THREE.Quaternion().setFromEuler(
-        new THREE.Euler(THREE.MathUtils.degToRad(-90), 0, 0)
-      );
-      const swordQuat  = cr.clone().multiply(offset);
-
-      // Blade forward axis
-      const bladeAxis  = new THREE.Vector3(0, 0, -1).applyQuaternion(swordQuat);
-
-      // Tip collision
-      this.tipOrig.copy(cp);
-      this.tipDir.copy(bladeAxis).normalize();
-      this.tipRay.set(this.tipOrig, this.tipDir);
-      this.tipRay.near = 0;
-      this.tipRay.far  = 0.65;
-      const tipHits    = this.tipRay.intersectObjects(this.meshes, false);
-
-      // Handle offset — pull sword down into palm
-      const handleOff  = new THREE.Vector3(0, -0.08, 0).applyQuaternion(swordQuat);
-      const desiredPos = cp.clone().add(handleOff);
-
-      if (tipHits.length > 0) {
-        desiredPos.addScaledVector(bladeAxis, tipHits[0].distance - 0.65);
+    // Gravity / terrain following
+    const ground = this.groundAt(pos.x, pos.z, pos.y + 5);
+    if (!this.grounded) {
+      this.vel -= this.data.gravity * sec;
+      pos.y += this.vel * sec;
+      if (ground !== null && pos.y <= ground) {
+        pos.y = ground;
+        this.vel = 0;
+        this.grounded = true;
       }
-
-      // Apply world-space position and rotation directly
-      this.swordEl.object3D.position.copy(desiredPos);
-      this.swordEl.object3D.quaternion.copy(swordQuat);
-
-      // Release
-      if (!trig && this.triggerDown) {
-        // Capture current world position and horizontal rotation for drop
-        this.dropPos.copy(desiredPos);
-        this.dropRotY = swordQuat.y; // used for landing orientation
-
-        if (this.inHipZone) {
-          // Sheathe
-          this.held     = false;
-          this.sheathed = true;
-          this.el.sceneEl.emit('inventory-update', { item: 'sword', state: 'sheathed' });
-        } else {
-          // Drop from current world position
-          this.held    = false;
-          this.dropped = true;
-          this.dropVel = 0;
-          // Set sword position explicitly to world drop position
-          this.swordEl.object3D.position.copy(this.dropPos);
-          this.el.sceneEl.emit('inventory-update', { item: 'sword', state: 'dropped' });
+    } else {
+      if (ground !== null) {
+        const diff = ground - pos.y;
+        if (diff > 0 && diff <= this.data.stepHeight) {
+          pos.y += diff * 0.2;
+        } else if (diff < 0) {
+          pos.y += diff * 0.2;
         }
       }
-
-      this.triggerDown = trig;
-      return;
     }
-
-    // ================================================================
-    // DROPPED — gravity fall
-    // ================================================================
-    if (this.dropped) {
-      // Apply gravity to sword's current world Y
-      this.dropVel -= this.data.gravity * sec;
-      this.swordEl.object3D.position.y += this.dropVel * sec;
-
-      const pos  = this.swordEl.object3D.position;
-      const orig = new THREE.Vector3(pos.x, pos.y + 1.0, pos.z);
-      this.downRay.set(orig, this.DOWN);
-      const hits = this.downRay.intersectObjects(this.meshes, false);
-
-      if (hits.length > 0 && pos.y <= hits[0].point.y + 0.02) {
-        // Land — lay flat, preserve the horizontal facing direction
-        pos.y        = hits[0].point.y + 0.02;
-        this.dropVel = 0;
-        this.dropped = false;
-        // Flat on ground: 90° around X, preserve Y rotation
-        const euler = new THREE.Euler().setFromQuaternion(
-          this.swordEl.object3D.quaternion
-        );
-        this.swordEl.object3D.rotation.set(
-          THREE.MathUtils.degToRad(90), euler.y, 0
-        );
-        // Restore pulse
-        const sc = this.data.scale;
-        this.swordEl.setAttribute('animation__pulse',
-          `property: object3D.scale; from: ${sc} ${sc} ${sc}; ` +
-          `to: ${sc*1.04} ${sc*1.04} ${sc*1.04}; ` +
-          'dur: 1500; dir: alternate; loop: true; easing: easeInOutSine');
-        this.el.sceneEl.emit('inventory-update', { item: 'sword', state: 'on-ground' });
-      }
-
-      // Re-grab while falling
-      if (trig && !this.triggerDown &&
-          this.swordEl.object3D.position.distanceTo(cp) < this.data.grabDist) {
-        this.held    = true;
-        this.dropped = false;
-        this.dropVel = 0;
-        this.swordEl.removeAttribute('animation__pulse');
-        this._fixMaterials();
-        this.el.sceneEl.emit('inventory-update', { item: 'sword', state: 'held' });
-      }
-    }
-
-    this.triggerDown = trig;
   }
 });
